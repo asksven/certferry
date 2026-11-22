@@ -1,0 +1,64 @@
+# Use case 3: several services and certificates in one run, e.g. from cron or a systemd timer:
+#
+#   certferry -c /etc/certferry/certferry.yaml --only-if-changed -o jsonl
+#
+# Values under "defaults" apply to every job; a job's own values win.
+# Command line options win over both.
+defaults:
+  context: prod
+  namespace: web
+  min_days: 14
+  only_if_changed: true
+  ssh:
+    identity: /etc/certferry/id_ed25519
+    options: [StrictHostKeyChecking=yes]
+  verify:
+    files: true
+    retries: 10
+    delay: 3
+
+jobs:
+  # Same certificate to the local nginx and to a remote Caddy container.
+  - name: website
+    certificate: example-com
+    formats: [fullchain, key]
+    targets:
+      - /etc/nginx/ssl/example.com
+      - scp://deploy@proxy.example.com/srv/caddy/certs
+    commands:
+      - nginx -t && systemctl reload nginx
+      - host: deploy@proxy.example.com
+        run: docker exec caddy caddy reload --config /etc/caddy/Caddyfile --force
+    verify:
+      endpoints:
+        - {host: 127.0.0.1, port: 443, servername: example.com}
+        - proxy.example.com:443
+
+  # HAProxy wants one PEM with chain and key.
+  - name: haproxy
+    secret: lb-example-com-tls
+    formats: [combined]
+    filenames: {combined: lb.example.com.pem}
+    targets:
+      - lb1.example.com:/etc/haproxy/certs
+      - lb2.example.com:/etc/haproxy/certs
+    commands:
+      - {host: lb1.example.com, run: "haproxy -c -f /etc/haproxy/haproxy.cfg && systemctl reload haproxy"}
+      - {host: lb2.example.com, run: "haproxy -c -f /etc/haproxy/haproxy.cfg && systemctl reload haproxy"}
+
+  # A Java service (Tomcat / Keycloak / Jenkins) reading a PKCS#12 keystore.
+  - name: keycloak
+    secret: sso-example-com-tls
+    namespace: identity
+    formats: [pkcs12, ca]
+    filenames: {pkcs12: keystore.p12}
+    pkcs12:
+      password_env: KEYSTORE_PASSWORD
+      friendly_name: server
+      legacy: false               # true for Java 8 < 8u301 or Windows Server 2016 and older
+    targets:
+      - {type: scp, host: sso.example.com, user: deploy, path: /opt/keycloak/conf/tls}
+    commands:
+      - {host: deploy@sso.example.com, run: [sudo, systemctl, restart, keycloak]}
+    verify:
+      endpoints: ["sso.example.com:8443"]

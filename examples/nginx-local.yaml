@@ -1,0 +1,25 @@
+# Use case 1: extract the certificate, write it into a local directory, reload nginx.
+#
+#   certferry -c examples/nginx-local.yaml --only-if-changed
+#
+# nginx:  ssl_certificate     /etc/nginx/ssl/example.com/fullchain.pem;
+#         ssl_certificate_key /etc/nginx/ssl/example.com/key.pem;
+name: example-com
+certificate: example-com          # cert-manager Certificate; its spec.secretName is used
+namespace: web
+context: prod
+formats: [fullchain, key]
+targets:
+  - path: /etc/nginx/ssl/example.com
+    owner: root
+    group: root
+commands:
+  - nginx -t && systemctl reload nginx
+verify:
+  files: true
+  endpoints:
+    - host: 127.0.0.1
+      port: 443
+      servername: example.com
+min_days: 14
+only_if_changed: true

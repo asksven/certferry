@@ -1,0 +1,128 @@
+# In-cluster deployment: a CronJob that reads cert-manager secrets with its own
+# ServiceAccount (kubectl picks up the in-cluster config automatically, no kubeconfig needed)
+# and pushes them over scp to hosts outside the cluster.
+#
+#   kubectl create namespace certferry
+#   kubectl -n certferry create secret generic certferry-ssh \
+#     --from-file=id_ed25519=./certferry_ed25519 \
+#     --from-file=known_hosts=./known_hosts          # ssh-keyscan proxy.example.com > known_hosts
+#   kubectl apply -f deploy/kubernetes/certferry.yaml
+#
+# Repeat the Role/RoleBinding pair for every namespace whose secrets certferry reads.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: certferry
+  namespace: certferry
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: certferry-reader
+  namespace: web
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [example-com-tls]       # only the secrets this job ships
+    verbs: [get]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: certferry-reader
+  namespace: web
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: certferry-reader
+subjects:
+  - kind: ServiceAccount
+    name: certferry
+    namespace: certferry
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: certferry-config
+  namespace: certferry
+data:
+  certferry.yaml: |
+    defaults:
+      namespace: web
+      only_if_changed: true
+      min_days: 14
+      ssh:
+        options:
+          - StrictHostKeyChecking=yes
+          # known_hosts lives on a read-only mount: never try to add hosts to it
+          - UserKnownHostsFile=/home/nonroot/.ssh/known_hosts
+      verify: {files: true, retries: 10, delay: 3}
+    jobs:
+      - name: caddy-proxy
+        certificate: example-com
+        formats: [fullchain, key]
+        key_mode: "0640"
+        targets:
+          - scp://deploy@proxy.example.com/srv/caddy/certs
+        commands:
+          - host: deploy@proxy.example.com
+            run: docker exec caddy caddy reload --config /etc/caddy/Caddyfile --force
+        verify:
+          endpoints: ["proxy.example.com:443"]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: certferry
+  namespace: certferry
+spec:
+  schedule: "17 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      template:
+        spec:
+          serviceAccountName: certferry
+          restartPolicy: Never
+          securityContext:
+            # 65532 is the "nonroot" user that exists in /etc/passwd of Chainguard images.
+            # ssh refuses to run for a UID without a passwd entry, so do not use a random UID.
+            runAsUser: 65532
+            runAsGroup: 65532
+            runAsNonRoot: true
+            fsGroup: 65532
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: certferry
+              image: ghcr.io/OWNER/certferry:latest     # pin by digest
+              args: ["--config", "/etc/certferry/certferry.yaml", "-o", "jsonl"]
+              securityContext:
+                readOnlyRootFilesystem: true
+                allowPrivilegeEscalation: false
+                capabilities: {drop: [ALL]}
+              resources:
+                requests: {cpu: 50m, memory: 64Mi, ephemeral-storage: 16Mi}
+                limits: {memory: 256Mi, ephemeral-storage: 64Mi}
+              volumeMounts:
+                - {name: config, mountPath: /etc/certferry, readOnly: true}
+                - {name: ssh, mountPath: /home/nonroot/.ssh, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: config
+              configMap: {name: certferry-config}
+            - name: ssh
+              secret:
+                secretName: certferry-ssh
+                # Files are owned by root with group fsGroup. OpenSSH only rejects a
+                # group-readable key when the key is owned by the running user, so 0440 works.
+                defaultMode: 0440
+            - name: tmp
+              emptyDir: {medium: Memory, sizeLimit: 32Mi}

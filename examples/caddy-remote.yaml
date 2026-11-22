@@ -1,0 +1,33 @@
+# Use case 2: extract the certificate, scp it to a remote host and make the Caddy container
+# pick it up. Caddy compares the config file on reload and skips unchanged configs, so
+# --force is needed for it to re-read certificate files that changed on disk.
+#
+#   certferry -c examples/caddy-remote.yaml
+#
+# Caddyfile (inside the container, /certs is a bind mount of /srv/caddy/certs):
+#   example.com {
+#       tls /certs/fullchain.pem /certs/key.pem
+#   }
+name: caddy-proxy
+secret: example-com-tls
+namespace: web
+formats: [fullchain, key]
+key_mode: "0640"                   # readable by the group the container runs as
+ssh:
+  identity: ~/.ssh/certferry_ed25519
+  options:
+    - StrictHostKeyChecking=yes
+targets:
+  - type: scp
+    host: proxy.example.com
+    user: deploy
+    port: 22
+    path: /srv/caddy/certs
+commands:
+  - host: deploy@proxy.example.com
+    run: docker exec caddy caddy reload --config /etc/caddy/Caddyfile --force
+verify:
+  files: true
+  endpoints: ["proxy.example.com:443"]
+  retries: 10
+  delay: 3
