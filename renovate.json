@@ -1,0 +1,19 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "osvVulnerabilityAlerts": true,
+  "packageRules": [
+    {
+      "matchManagers": ["dockerfile"],
+      "schedule": "every friday",
+      "groupName": "Docker images weekly",
+      "groupSlug": "docker-images-weekly"
+    },
+    {
+      "matchManagers": ["pip_requirements", "pep621"],
+      "schedule": "every friday",
+      "groupName": "Pip weekly",
+      "groupSlug": "pip-weekly"
+    }
+  ]
+}
