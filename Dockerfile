@@ -18,10 +18,10 @@
 # Pin the bases by digest in production, and keep python and python-dev on the same
 # release (the build fails if their Python minor versions differ).
 
-ARG PYTHON_IMAGE=cgr.dev/chainguard/python:latest@sha256:4ba1897d53045d3661b549ca66aa1888816d67c27632aca7913cd521d10589cc
-ARG PYTHON_DEV_IMAGE=cgr.dev/chainguard/python:latest-dev@sha256:fbcaaaf39fa2d0c8cb15e836bc57a6966103e0aaacc76b643e0d596729f1e9fb
+ARG PYTHON_IMAGE=cgr.dev/chainguard/python:latest@sha256:9c4bfa852765da1bfb86d4d500c3333db1c0929c4b9845a90ca7d199d857f90c
+ARG PYTHON_DEV_IMAGE=cgr.dev/chainguard/python:latest-dev@sha256:69e90282a0f83fcd7a8f3e94e93755f6d3e340280639c2bf6440522085c6ae90
 ARG KUBECTL_IMAGE=cgr.dev/chainguard/kubectl:latest@sha256:c72018fb3a29ea34b1d6190ee2e0d7276bef976c1feb628adb5b1c81256169a8
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13
 
 FROM ${UV_IMAGE} AS uv
 FROM ${KUBECTL_IMAGE} AS kubectl
